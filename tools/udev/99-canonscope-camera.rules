@@ -1,0 +1,41 @@
+# canonscope -- keep the desktop's hands off the camera.
+#
+# THE PROBLEM
+#   60-libgphoto2-6.rules matches any PTP still-image device (USB interface
+#   class 060101) and sets ID_GPHOTO2=1. gvfs-gphoto2-volume-monitor watches
+#   for exactly that and auto-mounts the camera, claiming the PTP session.
+#   The camera screen goes black and chdkptp reports:
+#       open_camera_dev_usb:usb_ptp_device_reset(): Device or resource busy
+#       open_camera_dev_usb: ptp_opensession failed 0x2ff
+#
+# THE FIX
+#   Clear the two markers for this one camera, so the volume monitor never
+#   notices it. Other cameras keep working normally.
+#
+# WHY THE NUMBER IS 99 AND NOT, SAY, 61
+#   It must sort after 60-libgphoto2-6.rules to override what that sets, and
+#   after 70-uaccess.rules for a subtler reason: 70-uaccess.rules:17 reads
+#       ENV{ID_GPHOTO2}=="?*", TAG+="uaccess"
+#   so clearing ID_GPHOTO2 *before* that line runs would cost the desktop user
+#   their ACL on the device node -- and with it, write access. Numbered at 99
+#   the tag is already applied. (70-uaccess.rules:14 also grants uaccess from
+#   the interface class alone, so this is belt and braces.)
+#
+# ACCESS IS GRANTED TWO WAYS, BECAUSE THE TWO MACHINES DIFFER
+#   uaccess   an ACL for the user of the *active seat*. Works on a desktop.
+#             Does NOT apply to an SSH session on a headless Pi: no seat,
+#             no ACL.
+#   plugdev   group ownership. The fallback that works headless -- the Pi's
+#             user must be a member of plugdev, or it gets no write access
+#             and chdkptp fails the same way gvfs made it fail.
+#
+# Setting MODE and GROUP here rather than relying on 60-libgphoto2-6.rules
+# also means this works on a machine where libgphoto2 is not installed.
+
+ACTION!="add|bind", GOTO="canonscope_end"
+
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="04a9", ATTR{idProduct}=="31c0", \
+    ENV{ID_GPHOTO2}="", ENV{GPHOTO2_DRIVER}="", \
+    MODE="0664", GROUP="plugdev", TAG+="uaccess"
+
+LABEL="canonscope_end"

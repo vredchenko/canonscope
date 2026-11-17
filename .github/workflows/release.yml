@@ -1,0 +1,63 @@
+# Push a tag vX.Y.Z and this publishes a GitHub release with:
+#   canonscope_X.Y.Z_amd64.deb   desktops, laptops, x86 servers
+#   canonscope_X.Y.Z_arm64.deb   Raspberry Pi OS 64-bit (Pi 3/4/5), other arm64
+#   chdkptp-src-<commit>.tar.gz  corresponding source for the bundled GPL-2.0
+#                                chdkptp binary
+#   SHA256SUMS
+#
+# The tag must agree with VERSION and the plugin manifests -- see
+# packaging/bump-version.sh, which sets all three.
+name: release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag, VERSION and plugin manifests agree
+        run: packaging/check-version.sh "${GITHUB_REF_NAME}"
+
+  build:
+    needs: check
+    uses: ./.github/workflows/build-deb.yml
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: deb-*
+          path: dist
+          merge-multiple: true
+
+      - name: Source for the bundled chdkptp (GPL-2.0)
+        run: |
+          pin="$(cut -d' ' -f1 assets/chdkptp/PINNED.txt)"
+          git init -q chdkptp-src
+          git -C chdkptp-src fetch -q --depth 1 https://github.com/svn2github/chdkptp.git "$pin"
+          git -C chdkptp-src archive --format=tar.gz --prefix="chdkptp-${pin:0:12}/" \
+            -o "../dist/chdkptp-src-${pin:0:12}.tar.gz" FETCH_HEAD
+
+      - name: Checksums
+        run: cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "canonscope ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --verify-tag

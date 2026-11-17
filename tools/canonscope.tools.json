@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "cli": "tools/canonscope",
+  "purpose": [
+    "The single description of the camera's control surface.",
+    "",
+    "tools/canonscope is the contract; this file states what that contract is,",
+    "in a form a test can check. tools/tests/test-schema.py asserts three-way",
+    "agreement: every verb the dispatcher accepts appears here, every verb here",
+    "returns exactly the --json keys promised, and every MCP tool in",
+    "mcp/canonscope_mcp.py matches its projection below.",
+    "",
+    "The MCP server does NOT build its registrations from this file. Its tools",
+    "stay as readable decorated functions with real type hints and real prose;",
+    "the test is what keeps them honest. Generating them dynamically would make",
+    "the server harder to read without making it any safer -- the drift that",
+    "actually hurts is a renamed verb or a changed key, and the test catches",
+    "that either way.",
+    "",
+    "Verbs with no 'mcp' block are CLI-only. A future consumer adds its own",
+    "projection block per verb, and the test grows a case."
+  ],
+  "verbs": {
+    "status": {
+      "summary": "Camera health and current state, in one round trip.",
+      "args": [],
+      "returns": {
+        "chdk": "string", "platform": "string", "platsub": "string",
+        "zoom": "int", "zoom_steps": "int",
+        "vbatt_mv": "int", "usb_power": "int",
+        "temp_optical_c": "int", "temp_ccd_c": "int", "temp_battery_c": "int",
+        "free_kb": "int", "jpg_remaining": "int", "shutter_count": "int",
+        "mode_rec": "int",
+        "focal_um": "int", "eff_focal_um": "int",
+        "dof_near_mm": "int", "dof_far_mm": "int",
+        "av96": "int", "tv96": "int", "sv96": "int"
+      },
+      "mcp": {
+        "name": "camera_get_status",
+        "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true }
+      }
+    },
+    "capabilities": {
+      "summary": "What this body supports. Static; cacheable for a session.",
+      "args": [],
+      "returns": {
+        "usb_capture": "int", "raw": "string", "nd_filter": "int",
+        "sd_override_modes": "int", "propset": "int", "zoom_steps": "int",
+        "video_remote": "string", "canon_raw": "string"
+      },
+      "mcp": {
+        "name": "camera_get_capabilities",
+        "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true }
+      }
+    },
+    "shoot": {
+      "summary": "Take a photograph; the JPEG lands on the host, not the card.",
+      "args": [
+        { "name": "--tv", "type": "number", "required": false, "unit": "seconds",
+          "description": "Shutter speed. Omit for automatic." },
+        { "name": "--sv", "type": "int", "required": false, "unit": "iso-real",
+          "description": "ISO, Canon 'real' value. Omit for automatic." },
+        { "name": "--sd", "type": "string", "required": false, "unit": "distance",
+          "description": "Subject distance, e.g. '2m'. Omit for autofocus." },
+        { "name": "--flash", "type": "string", "required": false,
+          "enum": ["off", "auto", "on", "keep"], "default": "off",
+          "description": "Defaults to off: firing it browned this body out at 69% battery." }
+      ],
+      "returns": { "ok": "bool", "path": "string" },
+      "mcp": {
+        "name": "camera_capture_photo",
+        "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false }
+      }
+    },
+    "preview": {
+      "summary": "Live-view frames. No shutter actuation, no card write.",
+      "args": [
+        { "name": "-n", "type": "int", "required": false, "default": 1,
+          "description": "How many consecutive frames." },
+        { "name": "--out", "type": "string", "required": false,
+          "description": "Directory to write into." },
+        { "name": "--format", "type": "string", "required": false,
+          "enum": ["auto", "ppm", "png"], "default": "auto",
+          "description": "PPM needs nothing; PNG needs ImageMagick 'convert'." }
+      ],
+      "returns": { "ok": "bool", "count": "int", "frames": "array" },
+      "mcp": {
+        "name": "camera_live_view",
+        "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true }
+      }
+    },
+    "zoom": {
+      "summary": "Move the optical zoom. 126 discrete, repeatable steps.",
+      "args": [
+        { "name": "position", "type": "string", "required": true, "positional": true,
+          "description": "A step 0-125, a relative '+n'/'-n', or 'wide'/'tele'." }
+      ],
+      "returns": { "ok": "bool", "zoom": "int", "zoom_steps": "int" },
+      "refuses": "below 3400 mV on battery power, unless CANONSCOPE_FORCE=1",
+      "mcp": {
+        "name": "camera_set_zoom",
+        "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+      }
+    },
+    "focus": {
+      "summary": "Fix focus at a distance, or hand it back to autofocus.",
+      "args": [
+        { "name": "distance", "type": "string", "required": true, "positional": true,
+          "unit": "millimetres", "description": "A whole number of mm, or 'auto'." }
+      ],
+      "returns": { "ok": "bool", "mode": "string", "focus_mm": "int", "requested_mm": "int|null" },
+      "note": "Both modes return the same keys; requested_mm is null for auto.",
+      "mcp": {
+        "name": "camera_set_focus",
+        "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+      }
+    },
+    "version": {
+      "summary": "The installed canonscope version.",
+      "args": [],
+      "returns": { "version": "string" }
+    },
+    "lua": {
+      "summary": "Run arbitrary Lua on the camera. The escape hatch.",
+      "args": [
+        { "name": "code", "type": "string", "required": true, "positional": true,
+          "description": "Lua source; needs a 'return' to hand a value back." }
+      ],
+      "returns": { "ok": "bool", "result": "string|int" },
+      "mcp": {
+        "name": "camera_run_lua",
+        "enabled_by": "CANONSCOPE_ENABLE_LUA=1",
+        "annotations": { "readOnlyHint": false, "destructiveHint": true, "openWorldHint": true }
+      }
+    }
+  },
+  "mcp_only": {
+    "camera_show_image": {
+      "summary": "Return a captured file as an image block, by path.",
+      "why": "The capture verbs return paths. Inlining a 4000x3000 JPEG is very token-expensive, and image blocks have been reported arriving at models as raw base64 text. Looking is a separate, deliberate act.",
+      "constraint": "refuses paths outside captures/",
+      "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true }
+    }
+  }
+}

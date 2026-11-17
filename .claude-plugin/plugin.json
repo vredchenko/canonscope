@@ -1,0 +1,22 @@
+{
+  "name": "canonscope",
+  "version": "0.0.1",
+  "description": "Give Claude Code eyes: take photos, grab live view, and drive zoom and focus on a CHDK-enabled Canon PowerShot over USB.",
+  "author": {
+    "name": "Val Redchenko",
+    "url": "https://github.com/vredchenko"
+  },
+  "homepage": "https://github.com/vredchenko/canonscope",
+  "repository": "https://github.com/vredchenko/canonscope",
+  "license": "MIT",
+  "keywords": ["camera", "chdk", "canon", "powershot", "chdkptp", "tethered-capture", "mcp", "hardware"],
+  "mcpServers": {
+    "canonscope": {
+      "command": "bash",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/run-server.sh"],
+      "env": {
+        "CANONSCOPE_DATA": "${CLAUDE_PLUGIN_DATA}"
+      }
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "canonscope",
+  "build": { "dockerfile": "Dockerfile" },
+  "//workspaceMount": "Pinned explicitly: the default target is /workspaces/<local folder name>, so a clone into any directory not named exactly 'canonscope' (a worktree, canonscope-2, ...) would start in a path that does not exist.",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/canonscope,type=bind",
+  "workspaceFolder": "/workspaces/canonscope",
+  "remoteUser": "dev",
+  "postCreateCommand": ".devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "timonwong.shellcheck",
+        "ms-python.python"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  },
+  "mounts": [],
+  "runArgs": []
+}

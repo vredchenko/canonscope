@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "canonscope": {
+      "type": "stdio",
+      "command": "mcp/run-server.sh",
+      "args": []
+    }
+  }
+}

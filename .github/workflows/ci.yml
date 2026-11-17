@@ -1,0 +1,37 @@
+# Everything that needs no camera, on every push and pull request.
+#
+#   verify   builds THE DEV CONTAINER IMAGE and runs .devcontainer/verify.sh in
+#            it: one definition of the environment, used by people and CI.
+#   package  builds the .deb on amd64 and arm64 (Raspberry Pi OS 64-bit), so a
+#            packaging break shows up before a release tag, not after.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the dev container image
+        run: docker build -t canonscope-dev -f .devcontainer/Dockerfile .devcontainer
+
+      - name: Bake the checkout into a CI layer
+        run: docker build -t canonscope-ci -f .github/ci.Dockerfile .
+
+      # One container: post-create writes the venv that verify.sh then uses.
+      - name: Run the suites
+        run: >
+          docker run --rm canonscope-ci
+          bash -c '.devcontainer/post-create.sh && .devcontainer/verify.sh'
+
+  package:
+    uses: ./.github/workflows/build-deb.yml

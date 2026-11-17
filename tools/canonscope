@@ -1,0 +1,313 @@
+#!/usr/bin/env bash
+#
+# canonscope -- one front door to the camera.
+#
+# Wraps chdkptp so that driving the camera is a matter of verbs rather than
+# remembering Lua function names and APEX96 units. Every verb speaks --json,
+# because this CLI is also the contract that higher layers bind to: an MCP
+# server, and a local action model. See docs/10-control-surface.md.
+#
+# bash + coreutils only. No jq, no Python -- this has to run unchanged on a
+# freshly installed Pi.
+#
+set -euo pipefail
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/camera.sh"
+
+JSON=0
+
+usage() {
+    cat <<EOF
+Usage: canonscope <verb> [options]
+
+Verbs:
+  status              is the rig healthy, and what is it pointed at
+  capabilities        what this body supports (static; safe to cache)
+  shoot [opts]        take a photo, land the JPEG on this host
+  preview [opts]      live-view frames -- no shutter, no card write
+  zoom <spec>         absolute step, +n/-n, or 'wide'/'tele'
+  focus <spec>        distance in mm, or 'auto'
+  lua <code>          run Lua on the camera (the escape hatch)
+  version             print the version
+  help
+
+Global options:
+  --json              machine-readable output
+  -V, --version       print the version and exit
+  -h, --help          this text
+
+Common options are per-verb; run 'canonscope help <verb>'.
+
+Environment:
+  CHDKPTP_DIR              directory holding chdkptp.sh (default: search
+                           build/chdkptp, /usr/lib/canonscope/chdkptp, PATH)
+  CANONSCOPE_CAPTURE_DIR   where photos and preview frames land
+  CANONSCOPE_KEEP_GVFS=1   don't kill gvfsd-gphoto2 before connecting
+  CANONSCOPE_FORCE=1       drive the zoom motor even on a low battery
+EOF
+}
+
+# ------------------------------------------------------------------ status --
+verb_status() {
+    local raw pairs=() field
+    raw="$(cam_status_raw)"
+    # Split on '|' without a subshell pipe, so set -e behaves.
+    IFS='|' read -r -a pairs <<< "$raw"
+
+    if (( JSON )); then
+        json_from_pairs "${pairs[@]}"
+        return 0
+    fi
+
+    local -A f=()
+    for field in "${pairs[@]}"; do f["${field%%=*}"]="${field#*=}"; done
+
+    printf '%-16s %s (%s-%s)\n' "chdk"      "${f[chdk]}" "${f[platform]}" "${f[platsub]}"
+    printf '%-16s %s / %s\n'    "zoom"      "${f[zoom]}" "${f[zoom_steps]}"
+    printf '%-16s %s mV%s\n'    "battery"   "${f[vbatt_mv]}" \
+        "$( (( f[usb_power] )) && printf ' (on USB power)' || printf ' (on battery)' )"
+    printf '%-16s %s / %s / %s C  (optical/ccd/battery)\n' "temperature" \
+        "${f[temp_optical_c]}" "${f[temp_ccd_c]}" "${f[temp_battery_c]}"
+    printf '%-16s %s MB free, %s shots remaining\n' "card" \
+        "$(( f[free_kb] / 1024 ))" "${f[jpg_remaining]}"
+    printf '%-16s %s actuations\n' "shutter" "${f[shutter_count]}"
+    printf '%-16s %s\n' "mode" "$( (( f[mode_rec] )) && printf 'rec (shooting)' || printf 'play' )"
+    # Integer maths only, to match the camera's own units: um -> mm, mm -> cm.
+    printf '%-16s %s.%s mm actual, %s mm equivalent\n' "lens" \
+        "$(( f[focal_um] / 1000 ))" "$(( (f[focal_um] % 1000) / 100 ))" \
+        "$(( f[eff_focal_um] / 1000 ))"
+    printf '%-16s %s cm to %s cm sharp\n' "depth of field" \
+        "$(( f[dof_near_mm] / 10 ))" "$(( f[dof_far_mm] / 10 ))"
+    printf '%-16s av96=%s tv96=%s sv96=%s\n' "exposure" \
+        "${f[av96]}" "${f[tv96]}" "${f[sv96]}"
+
+    # A warning worth having: the flash brownout in docs/02-power.md happened
+    # at 69%. 3500 mV is the point where lens motors start being a gamble.
+    if (( f[vbatt_mv] < 3500 && ! f[usb_power] )); then
+        warn "battery at ${f[vbatt_mv]} mV -- charge before any lens movement or long session"
+    fi
+}
+
+# ------------------------------------------------------------ capabilities --
+# Static facts about this body. Cheap to re-read, but they never change, so a
+# caller may cache them for the life of a session.
+verb_capabilities() {
+    local raw pairs=()
+    raw="$(cam_lua 'return string.format(
+"usb_capture=%d|raw=%s|nd_filter=%d|sd_override_modes=%d|propset=%d|zoom_steps=%d|video_remote=%s|canon_raw=%s",
+ get_usb_capture_support(), tostring(get_raw_support()), get_nd_present(),
+ get_sd_over_modes(), get_propset(), get_zoom_steps(),
+ tostring(get_video_button()), tostring(get_canon_raw_support()))')"
+    IFS='|' read -r -a pairs <<< "$raw"
+
+    if (( JSON )); then json_from_pairs "${pairs[@]}"; return 0; fi
+
+    local -A f=()
+    local field
+    for field in "${pairs[@]}"; do f["${field%%=*}"]="${field#*=}"; done
+    local cap=${f[usb_capture]} sd=${f[sd_override_modes]}
+    printf '%-22s %s\n' "tethered capture" \
+        "$( (( cap & 1 )) && printf 'JPG ' ; (( cap & 2 )) && printf 'RAW ' ; (( cap & 4 )) && printf 'DNG-header ' ; (( cap & 8 )) || printf '(no CRAW)' )"
+    printf '%-22s %s\n' "subject-distance over" \
+        "$( (( sd & 1 )) && printf 'AF ' ; (( sd & 2 )) && printf 'AFL ' ; (( sd & 4 )) && printf 'MF' )"
+    printf '%-22s %s steps\n' "zoom" "${f[zoom_steps]}"
+    printf '%-22s %s\n' "raw support" "${f[raw]}"
+    printf '%-22s %s\n' "nd filter" "$( [[ ${f[nd_filter]} == 0 ]] && printf 'none' || printf 'present' )"
+    printf '%-22s %s\n' "remote video" "${f[video_remote]}"
+    printf '%-22s %s\n' "propset" "${f[propset]}"
+}
+
+# ------------------------------------------------------------------- shoot --
+# Delegates to capture.sh rather than reimplementing it. That script already
+# encodes decisions that cost real time to learn -- the flash-off default, the
+# pkill -x trap, tolerating "already in rec" -- and duplicating them here would
+# mean two places to get them wrong.
+verb_shoot() {
+    if (( JSON )); then
+        # capture.sh prints its path as the last line of stdout.
+        local log last
+        log="$("${CANONSCOPE_ROOT}/tools/capture.sh" "$@")"
+        last="$(sed -n '$p' <<< "$log")"
+        json_from_pairs "ok=true" "path=${last}"
+    else
+        "${CANONSCOPE_ROOT}/tools/capture.sh" "$@"
+    fi
+}
+
+# ----------------------------------------------------------------- preview --
+# Live view: the camera streams its viewfinder with no shutter actuation and no
+# card write. On a body whose shutter is irreplaceable, this is how you poll.
+verb_preview() {
+    local count=1 dir="" fmt="auto"
+    while (( $# )); do
+        case "$1" in
+            -n|--count) count="${2:?--count needs a number}"; shift ;;
+            --out)      dir="${2:?--out needs a directory}"; shift ;;
+            --format)   fmt="${2:?--format needs ppm|png}"; shift ;;
+            -h|--help)  printf 'Usage: canonscope preview [-n N] [--out DIR] [--format ppm|png|auto]\n'; return 0 ;;
+            *) die "unknown preview option '$1'" ;;
+        esac
+        shift
+    done
+    [[ "$count" =~ ^[0-9]+$ ]] || die "--count must be a number"
+    [[ -n "$dir" ]] || dir="${CAPTURE_DIR}/preview"
+    mkdir -p "$dir"
+
+    # ImageMagick is NOT in the coreutils budget, so PPM is the dependency-free
+    # default. PNG is produced only when ImageMagick happens to be present --
+    # which matters because Claude Code's Read tool renders PNG and not PPM.
+    # ImageMagick 7 names the binary `magick` and keeps `convert` only as a
+    # compatibility alias that distributions may drop, so prefer `magick`.
+    local -a im=()
+    if command -v magick >/dev/null 2>&1; then im=(magick)
+    elif command -v convert >/dev/null 2>&1; then im=(convert)
+    fi
+    local have_convert=$(( ${#im[@]} > 0 ))
+    case "$fmt" in
+        png) (( have_convert )) || die "--format png needs ImageMagick ('magick' or 'convert'); use --format ppm" ;;
+        ppm) have_convert=0 ;;
+        auto) : ;;
+        *) die "--format must be ppm or png" ;;
+    esac
+
+    # $$ guards against two runs landing in the same second -- without it the
+    # second run's find() picks up the first run's frames.
+    local stamp; stamp="$(date +%Y%m%d-%H%M%S)-$$"
+    local pat="${dir}/lv-${stamp}-%04d.ppm"
+    # The %04d is chdkptp's, not the shell's -- it must arrive unexpanded.
+    cam_exec "lvdumpimg -vp=${pat} -count=${count}" >/dev/null
+
+    # With -count=1 chdkptp writes the pattern LITERALLY rather than numbering
+    # it. Rename it before globbing, because "lv-${stamp}-*.ppm" matches the
+    # literal name too -- which silently defeated an earlier version of this
+    # check that looked for the literal only when the glob came back empty.
+    if [[ -f "$pat" ]]; then
+        mv "$pat" "${dir}/lv-${stamp}-0001.ppm"
+    fi
+
+    local produced=() f
+    while IFS= read -r f; do produced+=("$f"); done \
+        < <(find "$dir" -name "lv-${stamp}-[0-9][0-9][0-9][0-9].ppm" -type f | sort)
+    (( ${#produced[@]} )) || die "no live-view frames written to $dir"
+
+    local final=()
+    for f in "${produced[@]}"; do
+        if (( have_convert )); then
+            "${im[@]}" "$f" "${f%.ppm}.png" && rm -f "$f"
+            final+=("${f%.ppm}.png")
+        else
+            final+=("$f")
+        fi
+    done
+
+    if (( JSON )); then
+        printf '{"ok":true,"count":%d,"frames":[' "${#final[@]}"
+        local first=1
+        for f in "${final[@]}"; do (( first )) || printf ','; first=0; printf '"%s"' "$(json_escape "$f")"; done
+        printf ']}\n'
+    else
+        printf '%s\n' "${final[@]}"
+    fi
+}
+
+# -------------------------------------------------------------------- zoom --
+verb_zoom() {
+    local spec="${1:-}"
+    [[ -n "$spec" ]] || die "zoom needs a target: a step number, +n, -n, wide or tele"
+    local steps lua
+    steps="$(cam_lua 'return get_zoom_steps()')"
+    case "$spec" in
+        wide) lua="set_zoom(0)" ;;
+        tele) lua="set_zoom($(( steps - 1 )))" ;;
+        +*|-*)
+            [[ "${spec#[+-]}" =~ ^[0-9]+$ ]] || die "relative zoom must be +n or -n"
+            lua="set_zoom_rel(${spec})" ;;
+        *)
+            [[ "$spec" =~ ^[0-9]+$ ]] || die "zoom step must be a number, +n, -n, wide or tele"
+            (( spec < steps )) || die "zoom step $spec out of range (0..$(( steps - 1 )))"
+            lua="set_zoom(${spec})" ;;
+    esac
+    # Lens motors are the heaviest intermittent draw on this body; refuse to
+    # move them on a battery that has already sagged. See docs/02-power.md.
+    local v; v="$(cam_lua 'return string.format("%d|%d", get_vbatt(), get_usb_power())')"
+    local mv=${v%%|*} usb=${v##*|}
+    if (( mv < 3400 && ! usb )) && [[ "${CANONSCOPE_FORCE:-0}" != "1" ]]; then
+        die "battery at ${mv} mV -- refusing to drive the zoom motor; charge first (override with CANONSCOPE_FORCE=1)"
+    fi
+    cam_exec "lua ${lua}" >/dev/null
+    sleep 1
+    local now; now="$(cam_lua 'return get_zoom()')"
+    if (( JSON )); then json_from_pairs "ok=true" "zoom=${now}" "zoom_steps=${steps}"
+    else printf 'zoom now %s / %s\n' "$now" "$steps"; fi
+}
+
+# ------------------------------------------------------------------- focus --
+verb_focus() {
+    local spec="${1:-}"
+    [[ -n "$spec" ]] || die "focus needs a distance in mm, or 'auto'"
+    # Both branches return the SAME keys. A caller -- and the schema in
+    # tools/canonscope.tools.json -- should not have to know which mode was
+    # asked for in order to know what shape comes back.
+    if [[ "$spec" == "auto" ]]; then
+        cam_exec "lua set_aflock(0) set_mf(0)" >/dev/null
+        local now; now="$(cam_lua 'return get_focus()')"
+        if (( JSON )); then
+            json_from_pairs "ok=true" "mode=auto" "focus_mm=${now}" "requested_mm=null"
+        else printf 'focus: auto (currently %s mm)\n' "$now"; fi
+        return 0
+    fi
+    [[ "$spec" =~ ^[0-9]+$ ]] || die "focus distance must be a whole number of millimetres, or 'auto'"
+    cam_exec "lua set_mf(1) set_focus(${spec})" >/dev/null
+    sleep 1
+    local now; now="$(cam_lua 'return get_focus()')"
+    if (( JSON )); then
+        json_from_pairs "ok=true" "mode=manual" "focus_mm=${now}" "requested_mm=${spec}"
+    else printf 'focus now %s mm (asked for %s)\n' "$now" "$spec"; fi
+}
+
+# --------------------------------------------------------------------- lua --
+# The escape hatch, and the most important verb here. There are ~200 Lua
+# functions on the camera and this CLI will never wrap more than a dozen; this
+# keeps the other 190 reachable without anyone editing the tool.
+verb_lua() {
+    local code="${1:-}"
+    [[ -n "$code" ]] || die "lua needs some code, e.g. canonscope lua 'return get_zoom()'"
+    [[ "$code" == *return* ]] || \
+        warn "no 'return' in that code -- it will run but hand nothing back"
+    local val; val="$(cam_lua "$code")"
+    if (( JSON )); then json_from_pairs "ok=true" "result=${val}"
+    else printf '%s\n' "$val"; fi
+}
+
+# -------------------------------------------------------------------- main --
+(( $# )) || { usage; exit 1; }
+
+VERB=""
+ARGS=()
+while (( $# )); do
+    case "$1" in
+        --json) JSON=1 ;;
+        -V|--version)
+            if [[ -z "$VERB" ]]; then
+                printf 'canonscope %s\n' "$CANONSCOPE_VERSION"; exit 0
+            fi
+            ARGS+=("$1") ;;
+        -h|--help) [[ -z "$VERB" ]] && { usage; exit 0; } || ARGS+=("$1") ;;
+        *) if [[ -z "$VERB" ]]; then VERB="$1"; else ARGS+=("$1"); fi ;;
+    esac
+    shift
+done
+
+case "$VERB" in
+    status)       verb_status ;;
+    capabilities) verb_capabilities ;;
+    shoot)        verb_shoot "${ARGS[@]+"${ARGS[@]}"}" ;;
+    preview)      verb_preview "${ARGS[@]+"${ARGS[@]}"}" ;;
+    zoom)         verb_zoom "${ARGS[@]+"${ARGS[@]}"}" ;;
+    focus)        verb_focus "${ARGS[@]+"${ARGS[@]}"}" ;;
+    lua)          verb_lua "${ARGS[@]+"${ARGS[@]}"}" ;;
+    help)         usage ;;
+    version)
+        if (( JSON )); then json_from_pairs "version=${CANONSCOPE_VERSION}"
+        else printf 'canonscope %s\n' "$CANONSCOPE_VERSION"; fi ;;
+    *)            usage >&2; die "unknown verb '$VERB'" ;;
+esac

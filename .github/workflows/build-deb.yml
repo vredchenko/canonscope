@@ -1,0 +1,53 @@
+# Reusable: build canonscope_<version>_<arch>.deb natively on each architecture.
+#
+# Native runners rather than QEMU: chdkptp is compiled C, and emulated builds
+# are slow and occasionally wrong in ways that only show up on the board.
+# Built inside debian:trixie, the base of Raspberry Pi OS (trixie), so the
+# library versions in the package's Depends match what the Pi has.
+name: build-deb
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  deb:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential liblua5.2-dev libusb-dev libreadline-dev \
+            git ca-certificates
+
+      - uses: actions/checkout@v4
+
+      - name: Build the package
+        run: packaging/build-deb.sh
+
+      - name: Smoke-test the installed package
+        run: |
+          DEBIAN_FRONTEND=noninteractive apt-get install -y ./dist/canonscope_*_${{ matrix.arch }}.deb
+          canonscope --version
+          test "$(canonscope --version)" = "canonscope $(cat VERSION)"
+          chdkptp -e"quit"
+          CHDKPTP_DIR="$PWD/tools/tests/fake-chdkptp" CANONSCOPE_CAPTURE_DIR=/tmp/caps \
+            canonscope --json shoot | grep -q '"path":"/tmp/caps/'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.arch }}
+          path: dist/*.deb
+          if-no-files-found: error

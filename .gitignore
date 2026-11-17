@@ -1,0 +1,24 @@
+# Rebuildable with tools/fetch-assets.sh (~131 MB of mirrored CHDK material).
+# The manifest, checksums and pinned upstream commits ARE kept, so a clone can
+# tell exactly which upstream state the notes were written against.
+assets/*
+!assets/MANIFEST.md
+!assets/SHA256SUMS
+!assets/chdk/
+assets/chdk/*
+!assets/chdk/source/
+assets/chdk/source/*
+!assets/chdk/source/PINNED.txt
+!assets/chdkptp/
+assets/chdkptp/*
+!assets/chdkptp/PINNED.txt
+# Build output
+build/
+dist/
+# Photographs taken by the rig
+captures/
+# Python bytecode (mcp/, experiments/, tests)
+__pycache__/
+*.pyc
+# Claude Code per-user settings
+.claude/settings.local.json
