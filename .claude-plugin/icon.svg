@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2f3a"/>
+      <stop offset="1" stop-color="#171a21"/>
+    </linearGradient>
+    <radialGradient id="glass" cx="0.4" cy="0.38" r="0.7">
+      <stop offset="0" stop-color="#5b7fa8"/>
+      <stop offset="0.55" stop-color="#22324a"/>
+      <stop offset="1" stop-color="#0c121b"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <!-- camera body -->
+  <rect x="352" y="250" width="200" height="90" rx="28" fill="#D97757"/>
+  <rect x="150" y="300" width="724" height="474" rx="84" fill="#D97757"/>
+  <rect x="150" y="300" width="724" height="96" rx="48" fill="#e48a6c"/>
+  <rect x="700" y="352" width="104" height="44" rx="14" fill="#f3d9cf"/>
+  <!-- lens -->
+  <circle cx="512" cy="540" r="196" fill="#171a21"/>
+  <circle cx="512" cy="540" r="160" fill="#3a4150"/>
+  <circle cx="512" cy="540" r="128" fill="url(#glass)"/>
+  <circle cx="512" cy="540" r="58" fill="#05080d"/>
+  <circle cx="470" cy="494" r="26" fill="#ffffff" fill-opacity="0.85"/>
+  <circle cx="556" cy="590" r="10" fill="#ffffff" fill-opacity="0.45"/>
+  <!-- status led -->
+  <circle cx="238" cy="386" r="22" fill="#7fe0a0"/>
+</svg>

@@ -60,7 +60,6 @@ is the overview.
 - [ ] **Cache `.deb` dependencies** for offline installs (`--only debs`),
       as a local apt repository. See
       [docs/07](docs/07-shell-and-provisioning-lessons.md).
-- [ ] **A plugin icon** for the Claude Code plugin listing.
 
 ## Power
 

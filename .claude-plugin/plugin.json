@@ -9,6 +9,7 @@
   "homepage": "https://github.com/vredchenko/canonscope",
   "repository": "https://github.com/vredchenko/canonscope",
   "license": "MIT",
+  "icon": ".claude-plugin/icon.png",
   "keywords": ["camera", "chdk", "canon", "powershot", "chdkptp", "tethered-capture", "mcp", "hardware"],
   "mcpServers": {
     "canonscope": {
