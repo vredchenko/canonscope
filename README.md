@@ -98,7 +98,7 @@ udev rule. Use `amd64` for PCs and `arm64` for Raspberry Pi 3/4/5 on 64-bit
 Raspberry Pi OS:
 
 ```sh
-VER=0.0.1 ARCH=$(dpkg --print-architecture)
+VER=0.0.2 ARCH=$(dpkg --print-architecture)
 curl -LO "https://github.com/vredchenko/canonscope/releases/download/v${VER}/canonscope_${VER}_${ARCH}.deb"
 sudo apt install "./canonscope_${VER}_${ARCH}.deb"
 sudo usermod -aG plugdev "$USER"     # needed headless/over SSH; log in again afterwards

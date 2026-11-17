@@ -12,7 +12,7 @@
       "name": "canonscope",
       "source": "./",
       "description": "Give Claude Code eyes: take photos, grab live view, and drive zoom and focus on a CHDK-enabled Canon PowerShot over USB.",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "license": "MIT",
       "homepage": "https://github.com/vredchenko/canonscope",
       "keywords": ["camera", "chdk", "canon", "mcp", "hardware"]

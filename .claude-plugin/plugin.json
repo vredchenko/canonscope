@@ -1,6 +1,6 @@
 {
   "name": "canonscope",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Give Claude Code eyes: take photos, grab live view, and drive zoom and focus on a CHDK-enabled Canon PowerShot over USB.",
   "author": {
     "name": "Val Redchenko",
